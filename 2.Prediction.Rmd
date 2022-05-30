@@ -1,0 +1,76 @@
+---
+title: "2.Prediction"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+#IMPORTANT NOTICE:
+
+##It is necessary to start predictions generating the classification models. DO it oppening the file **1.Training _Model.rmd** and follow instructions. If this is already done, follow instructions above.  
+
+
+## 4. Predictions
+
+The first step is to install knitr and libraries necessaries to do provenance predictions using the results from the generated models
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source('SRC/FUNCTIONS/FirstConfiguration.R', echo=TRUE)
+```
+
+The actions above are needed to charge the results from the trained models, some functions needed to make predictions and to charge the databe with unknown provenance samples.
+
+```{r}
+
+load("OUTPUT/Trained_Model.RData")
+
+source('SRC/FUNCTIONS/STACK_FUNCTION.R')
+source('SRC/FUNCTIONS/WRITE_FUNCTION.R')
+
+ruta<-"INPUTS/DATABASE 2 PREDICTION.xlsx"
+
+PT <- read_excel(ruta, sheet = 1)
+PT_txt<-PT[,2]
+PT[,2]<-NULL
+
+BASE<-PT
+BASE$group<-NULL
+
+head(read_excel(ruta, sheet = 1))
+
+```
+
+The head of the data from the document: **DATABASE 2 PREDICTION** can be seen on the results  above.
+
+The next chunk code will make de predictions but the results will not be displayed below. 
+
+```{r}
+model_list<-list(GLM=BASE.lrm,RF=BASE.rf1,NNET=BASE.nnet,KNN=BASE.kn1,LDA=BASE.lda)
+
+BASE_STACK<-stack_function(model_list,BASE,inf_group=FALSE)
+predicciorf1<-predict(object=BASE_STACK.rf,newdata = BASE_STACK)
+probstak<-predict(object=BASE_STACK.rf,newdata=BASE_STACK,type="prob")
+
+BASE_STACK_PROB<-stack_function_prob(model_list,BASE,inf_group=FALSE)
+
+
+
+BASE_STACK_PROB_TOTAL<-as.data.frame(c(BASE_STACK[,!is.element(names(BASE_STACK),"group")],BASE_STACK_PROB))
+
+```
+
+To produce the results, the following action will generate a .csv document with them.
+
+```{r}
+
+
+BASE_IMPRIMIR<-bbdd_print(PT_txt,BASE_STACK_PROB_TOTAL,predicciorf1,probstak)
+imprimeix(nom="prediction_results.csv",df=BASE_IMPRIMIR)
+
+```
+
+The results are now available on your computer, you will find a .csv document on the folder: /Supervised_Provenance_Analysis/OUTPUT
+
+Have a look at them and Good luck!
+

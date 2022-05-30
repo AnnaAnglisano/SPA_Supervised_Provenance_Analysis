@@ -1,0 +1,276 @@
+---
+title: "1.Training_Model"
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+---
+
+# IMPORTANT NOTICE: 
+
+##READ CAREFULLY all the text with white background, they are INSTRUCTIONS
+
+##DO NOT MODIFY anything (especially if it has a grey background unless specified), it is CODE
+
+##After executing each code chunk, the RESULT OF EXECUTION will be visible in most occasions (white background with a grey line separating it from the next instructions)
+
+You are now ready to use the SPA tool to make your own studies. However, the first step is to fill the input Excel spreadsheets with your own data.
+
+You will find them within the INPUTS folder: 
+Modify the contents of DATABASE 1 MODEL.xlsx with your reference data before running 1.Training_Model.rmd (to train your model) 
+
+Modify the contents of DABASE 2 PREDICTION.xlsx with the data of your samples of unknown provenance before running 2.Prediction.rmd (to produce probabilities to belong to the difference reference classes).
+For the two spreadsheets:
+
+**The first column is named “group”. Every sample within DATABASE 1 MODEL.xlsx has to be class-labeled to a specific group. Start from 1 and use as many numbers as groups in your database. In contrast let the column empty of unlabeled samples within DATABASE 2 PREDICTION.xlsx.**
+
+**The second column is named “Formula”. Here there is the individual tag of every sample. It is important to avoid duplicated tags in this column.**
+
+**From the third column onwards, there are the features that define every sample. In the published case study, these are the chemical weight % (i.e. the chemical composition) of different chemical elements (often expressed in form of oxides), but other variables could be used instead. It is important to use numbers for all the fields within these columns (use 0 for values below detection limits).**
+
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### 1.1 R Markdown installation
+
+Some libraries will be installed as required. This can take few minutes.
+
+```{r}
+source('SRC/FUNCTIONS/FirstConfiguration.R', echo=TRUE)
+source('SRC/FUNCTIONS/STACK_FUNCTION.R')
+```
+
+
+## 1.2 Inputs
+
+It is crucial to have modified the DATABASE 1 MODEL.xlsx file introducing your reference class-labeled data before running any chunk within 1.Training_Model.
+
+
+```{r pressure, echo=FALSE}
+ruta<-"INPUTS/DATABASE 1 MODEL.xlsx"
+
+PT <- read_excel(ruta, sheet = 1)
+PT_txt<-PT[,2]
+PT[,2]<-NULL
+PT$group<-factor(PT$group)
+str(PT)
+BASE<-subset(PT,group!=0)
+BASE$group<-as.factor(make.names(BASE$group))
+```
+## 1.3 Checklist
+
+**Some basic verifications will be carried out below**
+
+Make sure that here do not appear “NA” or “duplicated sample”.
+
+
+```{r}
+anyNA(PT)
+```
+Make sure that there are no variables without values in the database. The expected result is: FALSE. If the result is TRUE, check your spreadsheet again. 
+
+```{r}
+anyDuplicated(PT)
+```
+Make sure that there are not duplicated values on the dataset. The result should be 0 here.
+
+## 1.4 Summary of input data
+
+A summary of the number of groups and their samples can be seen below.
+The accuracy should increase:
+1. Having more samples in each group - it means more information to learn how to classify.
+2. Having less number of groups - it means that it will be easier to distinguish between 2 or 3 different groups than between 10
+
+```{r}
+table(PT$group)
+```
+## 1.5 Dataset partition
+
+Supervised Machine Learning works using the 80% of the samples (randomly selected) to train the model and then the rest 20% is used to test the model and as a result of this an accuracy value is produced. The accuracy value indicates how successful has been the classification model.
+
+In this case, the selection of samples is not completely random as we force also to select 80% of every single group to train the model. Sample selection within a group keeps being random.
+
+### Seed
+
+The random selection is determined by a *seed*. To make sure that the accuracy of your model is robust, you can try different using different seeds which are defined using numbers (do not use 0). Accuracy probably will change using different seeds, but not so much if the model is robust enough. 
+
+set.seed (change this number)
+
+```{r}
+set.seed(28)
+train<-createDataPartition(
+  PT$group,
+  times = 1,
+  p = 0.8,
+  list = TRUE
+)$Resample
+```
+
+# 2. Supervised models
+
+
+Different classification models can be used. The models that have been included within the code are those described within the published manuscript. These selected models have been extensively and successfully used in different fields of science and technology.  
+
+All models have been optimised using the *fit_control* function. 
+
+
+```{r}
+fit_control<-trainControl(method="repeatedcv",number=10,repeats=2,savePredictions="final",classProbs=TRUE)
+preproc=c("center","scale")
+```
+
+
+### Parameters to validate a model
+
+**Accuracy**: Indicates the ratio between hits and fails obtained by the model in the test step. (the closer to 1, the better)
+
+The **confusion matrix** gives more details as the ratio between hits and fails is given per each group in the test step. (a matrix with a diagonal full of 1 would mean a perfect performance).
+
+**Sensitivity**: (True Positive Rate, TP/(TP+FN)) capacity to detect true positives. (the closer to 1, the better)
+
+**Specificity**: (True Negative Rate, TN/ (TN+FP)) capacity to detect false positives  (the closer to 1, the better)
+
+**Balance accuracy**: It can be interpretated as the accuracy of each group (better when it is close from 1)
+ 
+
+*The description of models have been taken from Anglisano et al. 2020*
+
+## 2.1 Generalized linear models - Glmnet
+
+*Description*  
+These are generalization models of a linear relationship between the output variable (class) and a set of input variables (features) where the distribution of the output variable can be non-normal and non-continuous and the function linking input and output variables can be more complex than a simple identity function. Specifically, the Glmnet algorithm incorporates regularization (i.e., reduction of variance) by the lasso and elastic-net methods to avoid overfitting (i.e., noise fitting).
+
+```{r}
+BASE.lrm<-train(group~.,BASE[train,],method="glmnet",metric="Accuracy",preProc=preproc,trControl=fit_control)
+pred_lrm<-predict(BASE.lrm,BASE[-train,])
+confusionMatrix(pred_lrm,BASE$group[-train])
+```
+
+
+## 2.2 Random Forest - RF
+
+*Description*  
+This algorithm is based on the concept of decision tree (a series of yes/no questions asked to the data that in the end lead to a predicted class). The RF model deals with many decision trees (i.e., a forest) using random sampling to build the trees and random subsets of features when splitting nodes of the trees.
+
+```{r}
+
+BASE.rf1<-train(group~.,BASE[train,],method="ranger",metric="Accuracy",preProc=preproc,trControl=fit_control)
+pred_rf1<-predict(BASE.rf1,BASE[-train,])
+confusionMatrix(pred_rf1,BASE$group[-train])
+```
+
+
+
+## 2.3 Fit Neural Networks - ANN
+
+
+*Description*  
+A mathematical mimic of human learning where individual processing elements are organized in layers. The input layer receives the weighted values of the features of an object to produce new values through so called activation functions; these values will be also weighted and transferred to new layers until reaching the output which is made of as many elements as classes. The obtained values are used to assign a class to the object.
+
+```{r echo=T,results='hide'}
+BASE.nnet<-train(group~.,BASE[train,],method="nnet",metric="Accuracy",preProc=preproc,trControl=fit_control)
+pred_nnet<-predict(BASE.nnet,BASE[-train,])
+
+confusionMatrix(pred_nnet,BASE$group[-train])
+```
+
+
+## 2.4 k-Nearest Neighbour - kknn
+
+*Description*  
+Its basic idea is that a new object will be classified according to the class that have their k-nearest neighbors. 
+
+```{r}
+
+BASE.kn1<-train(group~.,BASE[train,],method="kknn",metric="Accuracy",preProc=preproc,trControl=fit_control)
+
+pred_kn1<-predict(BASE.kn1,BASE[-train,])
+confusionMatrix(pred_kn1,BASE$group[-train])
+
+```
+
+## 2.5  Linear discriminant analysis (LDA) 
+
+*Description*  
+Similarly to the PCA logic, delineates a new set of variables defined as linear combinations of the initial features reducing the dimensionality of the problem, but instead of looking for the maximum variance, LDA maximizes the separability among classes (the distance between their means) and simultaneously minimizes the internal scatter within each class.
+
+```{r}
+
+BASE.lda<-train(group~.,BASE[train,],method="lda",metric="Accuracy",preProc=preproc,trControl=fit_control)
+pred_lda<-predict(BASE.lda,BASE[-train,])
+confusionMatrix(pred_lda,BASE$group[-train])
+
+```
+
+
+
+## 2.6 Stack of models
+
+*Description*  
+With the aim of improving the accuracy of the predictions, information from multiple models is used to generate a new model using a random forest approach to the predictions from different models.
+
+The next graph shows accuracy variability of all models. It uses the results from 10 random seeds. Make sure that there are not important variations with values. The models with smaller variability are more robust. Avoid the use (i.e. disregard) of a model with strong accuracy variations to classify unlabeled samples. 
+
+```{r}
+
+model_list<-list(GLM=BASE.lrm,RF=BASE.rf1,NNET=BASE.nnet,KNN=BASE.kn1,LDA=BASE.lda)
+
+res <- resamples(model_list)
+bwplot(res,metric="Accuracy")
+```
+
+It is important to check that there is no correlation between the new variables (here, the different classification models).
+
+```{r}
+model_cor<-modelCor(res)
+model_cor             
+corrplot(model_cor)
+```
+
+Large great circles should appear only within the diagonal. If not, one of two correlated models should be deleted from the stack.
+
+**How to delete one model from stack?**
+In the first chunk of code in section 2.6 "Stack of models" you will find the following action:
+
+*model_list<-list(GLM=BASE.lrm,RF=BASE.rf1,NNET=BASE.nnet,KNN=BASE.kn1,LDA=BASE.lda)*
+
+Let us assume, for example, that you need to remove the Random Forest model from the stack.  To do so, remove  "**RF=BASE.rf,**" within the action. Don’t forget to delete only one coma.
+Don’t forget to delete only one coma. 
+
+
+The results of Stack of models are shown below.
+
+```{r}
+  
+BASE_STACK<-stack_function(model_list,BASE)
+BASE_STACK.rf<-train(group~.,BASE_STACK[train,], method="rf",metric="Accuracy")
+pred.satck<-predict(BASE_STACK.rf,BASE_STACK[-train,])
+confusionMatrix(pred.satck,BASE$group[-train])
+```
+
+
+## 3. Saving the results
+
+Finally, the code saves the training and test results of each model that can be used with the 2.Prediction code to perform studies with unlabeled samples.
+
+```{r}
+
+save(BASE_STACK.rf,
+     BASE.kn1,
+     BASE.lda,
+     BASE.lrm,
+     BASE.rf1,
+     BASE.nnet,
+
+     file = "OUTPUT/Trained_Model.RData")
+
+
+```
+
+Here the train and test step finishes and to move to the production of cluster prediction open the file  **2.Prediction.rmd** and follow its instructions 
+
+
